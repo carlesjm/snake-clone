@@ -1,10 +1,10 @@
+use bevy::core::FixedTimestep;
 use bevy::prelude::*;
 use bevy::render::pass::ClearColor;
-use bevy::core::FixedTimestep;
 use rand::prelude::random;
 
-const ARENA_WIDTH: u32 = 35;
-const ARENA_HEIGHT: u32 = 35;
+const ARENA_HEIGHT: u32 = 10;
+const ARENA_WIDTH: u32 = 10;
 
 #[derive(SystemLabel, Debug, Hash, PartialEq, Eq, Clone)]
 pub enum SnakeMovement {
@@ -137,8 +137,18 @@ fn spawn_food(
         .insert(Size::square(0.8));
 }
 
-fn snake_movement(mut heads: Query<(&mut Position, &SnakeHead)>) {
-    if let Some((mut head_pos, head)) = heads.iter_mut().next() {
+fn snake_movement(
+    segments: ResMut<SnakeSegments>,
+    mut heads: Query<(Entity, &SnakeHead)>,
+    mut positions: Query<&mut Position>,
+) {
+    if let Some((head_entity, head)) = heads.iter_mut().next() {
+        let segment_positions = segments
+            .0
+            .iter()
+            .map(|e| *positions.get_mut(*e).unwrap())
+            .collect::<Vec<Position>>();
+        let mut head_pos = positions.get_mut(head_entity).unwrap();
         match &head.direction {
             Direction::Left => {
                 head_pos.x -= 1;
@@ -153,6 +163,12 @@ fn snake_movement(mut heads: Query<(&mut Position, &SnakeHead)>) {
                 head_pos.y -= 1;
             }
         };
+        segment_positions
+            .iter()
+            .zip(segments.0.iter().skip(1))
+            .for_each(|(pos, segment)| {
+                *positions.get_mut(*segment).unwrap() = *pos;
+            });
     }
 }
 
@@ -212,7 +228,6 @@ fn main() {
         .insert_resource(SnakeSegments::default())
         .add_startup_system(setup.system())
         .add_startup_stage("game_setup", SystemStage::single(spawn_snake.system()))
-        .add_system(snake_movement.system())
         .add_system(
             snake_movement_input
                 .system()
