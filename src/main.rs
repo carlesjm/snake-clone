@@ -44,6 +44,11 @@ struct Materials {
     food_material: Handle<ColorMaterial>,
 }
 
+struct GrowthEvent;
+
+#[derive(Default)]
+struct LastTailPosition(Option<Position>);
+
 struct SnakeSegment;
 
 #[derive(Default)]
@@ -138,6 +143,7 @@ fn spawn_food(
 }
 
 fn snake_movement(
+    mut last_tail_position: ResMut<LastTailPosition>,
     segments: ResMut<SnakeSegments>,
     mut heads: Query<(Entity, &SnakeHead)>,
     mut positions: Query<&mut Position>,
@@ -169,6 +175,7 @@ fn snake_movement(
             .for_each(|(pos, segment)| {
                 *positions.get_mut(*segment).unwrap() = *pos;
             });
+        last_tail_position.0 = Some(*segment_positions.last().unwrap());
     }
 }
 
@@ -188,6 +195,38 @@ fn snake_movement_input(keyboard_input: Res<Input<KeyCode>>, mut heads: Query<&m
         if dir != head.direction.opposite() {
             head.direction = dir;
         }
+    }
+}
+
+fn snake_eating(
+    mut commands: Commands,
+    mut growth_writer: EventWriter<GrowthEvent>,
+    food_positions: Query<(Entity, &Position), With<Food>>,
+    head_positions: Query<&Position, With<SnakeHead>>,
+) {
+    for head_pos in head_positions.iter() {
+        for (ent, food_pos) in food_positions.iter() {
+            if food_pos == head_pos {
+                commands.entity(ent).despawn();
+                growth_writer.send(GrowthEvent);
+            }
+        }
+    }
+}
+
+fn snake_growth(
+    commands: Commands,
+    last_tail_position: Res<LastTailPosition>,
+    mut segments: ResMut<SnakeSegments>,
+    mut growth_reader: EventReader<GrowthEvent>,
+    materials: Res<Materials>,
+) {
+    if growth_reader.iter().next().is_some() {
+        segments.0.push(spawn_segment(
+            commands,
+            &materials.segment_material,
+            last_tail_position.0.unwrap(),
+        ));
     }
 }
 
@@ -226,6 +265,8 @@ fn main() {
             ..Default::default()
         })
         .insert_resource(SnakeSegments::default())
+        .insert_resource(LastTailPosition::default())
+        .add_event::<GrowthEvent>()
         .add_startup_system(setup.system())
         .add_startup_stage("game_setup", SystemStage::single(spawn_snake.system()))
         .add_system(
@@ -237,7 +278,19 @@ fn main() {
         .add_system_set(
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(0.150))
-                .with_system(snake_movement.system().label(SnakeMovement::Movement)),
+                .with_system(snake_movement.system().label(SnakeMovement::Movement))
+                .with_system(
+                    snake_eating
+                        .system()
+                        .label(SnakeMovement::Eating)
+                        .after(SnakeMovement::Movement),
+                )
+                .with_system(
+                    snake_growth
+                        .system()
+                        .label(SnakeMovement::Growth)
+                        .after(SnakeMovement::Eating),
+                ),
         )
         .add_system_set(
             SystemSet::new()
