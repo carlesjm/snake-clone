@@ -3,8 +3,16 @@ use bevy::render::pass::ClearColor;
 use bevy::core::FixedTimestep;
 use rand::prelude::random;
 
-const ARENA_WIDTH: u32 = 10;
-const ARENA_HEIGHT: u32 = 10;
+const ARENA_WIDTH: u32 = 25;
+const ARENA_HEIGHT: u32 = 25;
+
+#[derive(SystemLabel, Debug, Hash, PartialEq, Eq, Clone)]
+pub enum SnakeMovement {
+    Input,
+    Movement,
+    Eating,
+    Growth,
+}
 
 #[derive(Default, Copy, Clone, Eq, PartialEq, Hash)]
 struct Position {
@@ -16,6 +24,7 @@ struct Size {
     width: f32,
     height: f32,
 }
+
 impl Size {
     pub fn square(x: f32) -> Self {
         Self {
@@ -25,12 +34,34 @@ impl Size {
     }
 }
 
-struct SnakeHead;
-struct Food;
+struct SnakeHead {
+    direction: Direction,
+}
 
 struct Materials {
     head_material: Handle<ColorMaterial>,
     food_material: Handle<ColorMaterial>,
+}
+
+struct Food;
+
+#[derive(PartialEq, Copy, Clone)]
+enum Direction {
+    Left,
+    Up,
+    Right,
+    Down,
+}
+
+impl Direction {
+    fn opposite(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+            Self::Up => Self::Down,
+            Self::Down => Self::Up,
+        }
+    }
 }
 
 fn setup(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
@@ -51,7 +82,7 @@ fn spawn_snake(
             sprite: Sprite::new(Vec2::new(10.0, 10.0)),
             ..Default::default()
         })
-        .insert(SnakeHead)
+        .insert(SnakeHead {direction: Direction::Up})
         .insert(Position { x: 3, y: 3 })
         .insert(Size::square(0.8));
 }
@@ -73,22 +104,40 @@ fn spawn_food(
         .insert(Size::square(0.8));
 }
 
-fn snake_movement(
-    keyboard_input: Res<Input<KeyCode>>,
-    mut head_positions: Query<&mut Position, With<SnakeHead>>,
-) {
-    for mut pos in head_positions.iter_mut() {
-        if keyboard_input.pressed(KeyCode::Left) {
-            pos.x -= 1;
-        }
-        if keyboard_input.pressed(KeyCode::Right) {
-            pos.x += 1;
-        }
-        if keyboard_input.pressed(KeyCode::Down) {
-            pos.y -= 1;
-        }
-        if keyboard_input.pressed(KeyCode::Up) {
-            pos.y += 1;
+fn snake_movement(mut heads: Query<(&mut Position, &SnakeHead)>) {
+    if let Some((mut head_pos, head)) = heads.iter_mut().next() {
+        match &head.direction {
+            Direction::Left => {
+                head_pos.x -= 1;
+            }
+            Direction::Right => {
+                head_pos.x += 1;
+            }
+            Direction::Up => {
+                head_pos.y += 1;
+            }
+            Direction::Down => {
+                head_pos.y -= 1;
+            }
+        };
+    }
+}
+
+fn snake_movement_input(keyboard_input: Res<Input<KeyCode>>, mut heads: Query<&mut SnakeHead>) {
+    if let Some(mut head) = heads.iter_mut().next() {
+        let dir: Direction = if keyboard_input.pressed(KeyCode::Left) {
+            Direction::Left
+        } else if keyboard_input.pressed(KeyCode::Down) {
+            Direction::Down
+        } else if keyboard_input.pressed(KeyCode::Up) {
+            Direction::Up
+        } else if keyboard_input.pressed(KeyCode::Right) {
+            Direction::Right
+        } else {
+            head.direction
+        };
+        if dir != head.direction.opposite() {
+            head.direction = dir;
         }
     }
 }
@@ -120,27 +169,38 @@ fn position_translation(windows: Res<Windows>, mut q: Query<(&Position, &mut Tra
 
 fn main() {
     App::build()
-    .insert_resource(ClearColor(Color::rgb(0.04, 0.04, 0.04)))
-    .insert_resource(WindowDescriptor {
-        title: "Snake!".to_string(),
-        width: 500.0,
-        height: 500.0,
-        ..Default::default()
-    })
-    .add_startup_system(setup.system())
-    .add_startup_stage("game_setup", SystemStage::single(spawn_snake.system()))
-    .add_system(snake_movement.system())
-    .add_system_set(
-        SystemSet::new()
-            .with_run_criteria(FixedTimestep::step(1.0))
-            .with_system(spawn_food.system()),
-    )
-    .add_system_set_to_stage(
-        CoreStage::PostUpdate,
-        SystemSet::new()
-        .with_system(position_translation.system())
-        .with_system(size_scaling.system()),
-    )
-    .add_plugins(DefaultPlugins)
-    .run();
+        .insert_resource(ClearColor(Color::rgb(0.04, 0.04, 0.04)))
+        .insert_resource(WindowDescriptor {
+            title: "Snake!".to_string(),
+            width: 500.0,
+            height: 500.0,
+            ..Default::default()
+        })
+        .add_startup_system(setup.system())
+        .add_startup_stage("game_setup", SystemStage::single(spawn_snake.system()))
+        .add_system(snake_movement.system())
+        .add_system(
+            snake_movement_input
+                .system()
+                .label(SnakeMovement::Input)
+                .before(SnakeMovement::Movement),
+        )
+        .add_system_set(
+            SystemSet::new()
+                .with_run_criteria(FixedTimestep::step(0.150))
+                .with_system(snake_movement.system().label(SnakeMovement::Movement)),
+        )
+        .add_system_set(
+            SystemSet::new()
+                .with_run_criteria(FixedTimestep::step(1.0))
+                .with_system(spawn_food.system()),
+        )
+        .add_system_set_to_stage(
+            CoreStage::PostUpdate,
+            SystemSet::new()
+                .with_system(position_translation.system())
+                .with_system(size_scaling.system()),
+        )
+        .add_plugins(DefaultPlugins)
+        .run();
 }
